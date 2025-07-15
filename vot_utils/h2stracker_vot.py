@@ -108,7 +108,6 @@ class H2STracker():
         }
         # metadata for each tracking frame (e.g. which direction it's tracked)
         inference_state["tracking_has_started"] = False
-        inference_state["frames_already_tracked"] = {}
         inference_state["frames_tracked_per_obj"] = {}
         
         self.img_mean = self.img_mean.to(compute_device)
