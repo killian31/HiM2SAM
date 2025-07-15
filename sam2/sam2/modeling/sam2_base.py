@@ -994,9 +994,15 @@ class SAM2Base(torch.nn.Module):
                         obj_score = output_dict["non_cond_frame_outputs"][i]["object_score_logits"]  # Get object score
                         kf_score = output_dict["non_cond_frame_outputs"][i]["kf_score"] if "kf_score" in output_dict["non_cond_frame_outputs"][i] else None  # Get motion score if available
                         # Check if the scores meet the criteria for being a valid index
-                        if iou_score.item() > self.memory_bank_iou_threshold and \
-                           obj_score.item() > self.memory_bank_obj_score_threshold and \
-                           (kf_score is None or kf_score.item() > self.memory_bank_kf_score_threshold):
+                        # `iou_score`, `obj_score`, and `kf_score` could be numpy arrays
+                        # when tracking multiple objects. Use their maximum value
+                        # to decide whether this frame is valid for memory.
+                        iou_val = float(np.max(iou_score))
+                        obj_val = float(np.max(obj_score))
+                        kf_val = None if kf_score is None else float(np.max(kf_score))
+                        if iou_val > self.memory_bank_iou_threshold and \
+                           obj_val > self.memory_bank_obj_score_threshold and \
+                           (kf_val is None or kf_val > self.memory_bank_kf_score_threshold):
                             valid_indices.insert(0, i)  
                         # Check the number of valid indices
                         if len(valid_indices) >= self.max_obj_ptrs_in_encoder - 1:  
@@ -1022,10 +1028,14 @@ class SAM2Base(torch.nn.Module):
                         rvcot_ious = output_dict["non_cond_frame_outputs"][i]["rvcot_ious"] if "rvcot_ious" in output_dict["non_cond_frame_outputs"][i] else None  # Get motion score if available
 
                         # Check if the scores meet the criteria for being a valid index
-                        if iou_score.item() > self.memory_bank_iou_threshold and \
-                           obj_score.item() > self.memory_bank_obj_score_threshold and \
-                           (kf_score is None or kf_score.item() > self.memory_bank_kf_score_threshold) and \
-                           (rvcot_ious is None or rvcot_ious.item() > self.memory_bank_rvcot_iou_threshold):
+                        iou_val = float(np.max(iou_score))
+                        obj_val = float(np.max(obj_score))
+                        kf_val = None if kf_score is None else float(np.max(kf_score))
+                        rvcot_val = None if rvcot_ious is None else float(np.max(rvcot_ious))
+                        if iou_val > self.memory_bank_iou_threshold and \
+                           obj_val > self.memory_bank_obj_score_threshold and \
+                           (kf_val is None or kf_val > self.memory_bank_kf_score_threshold) and \
+                           (rvcot_val is None or rvcot_val > self.memory_bank_rvcot_iou_threshold):
                             valid_indices.insert(0, i)  
                         # Check the number of valid indices
                         if len(valid_indices) >= self.max_obj_ptrs_in_encoder - 1:  
@@ -1076,10 +1086,14 @@ class SAM2Base(torch.nn.Module):
                         rvcot_ious = frame_output["rvcot_ious"] if "rvcot_ious" in frame_output else None  # Get motion score if available
 
                         # Check if the scores meet the criteria for being a valid index
-                        if iou_score > self.memory_bank_iou_threshold and \
-                        obj_score > self.memory_bank_obj_score_threshold and \
-                        (kf_score is None or kf_score > self.memory_bank_kf_score_threshold) and \
-                        (rvcot_ious is None or rvcot_ious > self.memory_bank_rvcot_iou_threshold):
+                        iou_val = float(np.max(iou_score))
+                        obj_val = float(np.max(obj_score))
+                        kf_val = None if kf_score is None else float(np.max(kf_score))
+                        rvcot_val = None if rvcot_ious is None else float(np.max(rvcot_ious))
+                        if iou_val > self.memory_bank_iou_threshold and \
+                          obj_val > self.memory_bank_obj_score_threshold and \
+                          (kf_val is None or kf_val > self.memory_bank_kf_score_threshold) and \
+                          (rvcot_val is None or rvcot_val > self.memory_bank_rvcot_iou_threshold):
                             # if not self.rvcot_inteveal_intlike:
                             short_list.append(prev_frame_idx)      
                             lst = prev_frame_idx 

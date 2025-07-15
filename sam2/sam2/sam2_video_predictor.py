@@ -121,7 +121,7 @@ class SAM2VideoPredictor(SAM2Base):
         }
         # metadata for each tracking frame (e.g. which direction it's tracked)
         inference_state["tracking_has_started"] = False
-        inference_state["frames_already_tracked"] = {}
+        inference_state["frames_tracked_per_obj"] = {}
         # Warm up the visual backbone and cache the image feature on frame 0
         self._get_image_feature(inference_state, frame_idx=0, batch_size=1)
         return inference_state
@@ -151,7 +151,7 @@ class SAM2VideoPredictor(SAM2Base):
 
         # This is a new object id not sent to the server before. We only allow adding
         # new objects *before* the tracking starts.
-        allow_new_object = not inference_state["tracking_has_started"]
+        allow_new_object = True
         if allow_new_object:
             # get the next object slot
             obj_idx = len(inference_state["obj_id_to_idx"])
@@ -169,6 +169,7 @@ class SAM2VideoPredictor(SAM2Base):
                 "cond_frame_outputs": {},  # dict containing {frame_idx: <out>}
                 "non_cond_frame_outputs": {},  # dict containing {frame_idx: <out>}
             }
+            inference_state["frames_tracked_per_obj"][obj_idx] = {}
             return obj_idx
         else:
             raise RuntimeError(
@@ -267,12 +268,13 @@ class SAM2VideoPredictor(SAM2Base):
         # frame, meaning that the inputs points are to generate segments on this frame without
         # using any memory from other frames, like in SAM. Otherwise (if it has been tracked),
         # the input points will be used to correct the already tracked masks.
-        is_init_cond_frame = frame_idx not in inference_state["frames_already_tracked"]
+        obj_frames_tracked = inference_state["frames_tracked_per_obj"][obj_idx]
+        is_init_cond_frame = frame_idx not in obj_frames_tracked
         # whether to track in reverse time order
         if is_init_cond_frame:
             reverse = False
         else:
-            reverse = inference_state["frames_already_tracked"][frame_idx]["reverse"]
+            reverse = obj_frames_tracked[frame_idx]["reverse"]
         obj_output_dict = inference_state["output_dict_per_obj"][obj_idx]
         obj_temp_output_dict = inference_state["temp_output_dict_per_obj"][obj_idx]
         # Add a frame to conditioning output if it's an initial conditioning frame or
@@ -372,12 +374,13 @@ class SAM2VideoPredictor(SAM2Base):
         # frame, meaning that the inputs points are to generate segments on this frame without
         # using any memory from other frames, like in SAM. Otherwise (if it has been tracked),
         # the input points will be used to correct the already tracked masks.
-        is_init_cond_frame = frame_idx not in inference_state["frames_already_tracked"]
+        obj_frames_tracked = inference_state["frames_tracked_per_obj"][obj_idx]
+        is_init_cond_frame = frame_idx not in obj_frames_tracked
         # whether to track in reverse time order
         if is_init_cond_frame:
             reverse = False
         else:
-            reverse = inference_state["frames_already_tracked"][frame_idx]["reverse"]
+            reverse = obj_frames_tracked[frame_idx]["reverse"]
         obj_output_dict = inference_state["output_dict_per_obj"][obj_idx]
         obj_temp_output_dict = inference_state["temp_output_dict_per_obj"][obj_idx]
         # Add a frame to conditioning output if it's an initial conditioning frame or
@@ -758,7 +761,10 @@ class SAM2VideoPredictor(SAM2Base):
             self._add_output_per_object(
                 inference_state, frame_idx, current_out, storage_key
             )
-            inference_state["frames_already_tracked"][frame_idx] = {"reverse": reverse}
+            for obj_idx in range(batch_size):
+                inference_state["frames_tracked_per_obj"][obj_idx][frame_idx] = {
+                    "reverse": reverse
+                }
 
             # Resize the output mask to the original video resolution (we directly use
             # the mask scores on GPU for output to avoid any CPU conversion in between)
@@ -835,7 +841,8 @@ class SAM2VideoPredictor(SAM2Base):
                 # The frame is not a conditioning frame anymore since it's not receiving inputs,
                 # so we "downgrade" its output (if exists) to a non-conditioning frame output.
                 output_dict["non_cond_frame_outputs"][frame_idx] = out
-                inference_state["frames_already_tracked"].pop(frame_idx, None)
+                for obj_frames in inference_state["frames_tracked_per_obj"].values():
+                    obj_frames.pop(frame_idx, None)
             # Similarly, do it for the sliced output on each object.
             for obj_idx2 in range(batch_size):
                 obj_output_dict = inference_state["output_dict_per_obj"][obj_idx2]
@@ -879,6 +886,7 @@ class SAM2VideoPredictor(SAM2Base):
         inference_state["mask_inputs_per_obj"].clear()
         inference_state["output_dict_per_obj"].clear()
         inference_state["temp_output_dict_per_obj"].clear()
+        inference_state["frames_tracked_per_obj"].clear()
 
     def _reset_tracking_results(self, inference_state):
         """Reset all tracking inputs and results across the videos."""
@@ -892,12 +900,14 @@ class SAM2VideoPredictor(SAM2Base):
         for v in inference_state["temp_output_dict_per_obj"].values():
             v["cond_frame_outputs"].clear()
             v["non_cond_frame_outputs"].clear()
+        for v in inference_state["frames_tracked_per_obj"].values():
+            v.clear()
         inference_state["output_dict"]["cond_frame_outputs"].clear()
         inference_state["output_dict"]["non_cond_frame_outputs"].clear()
         inference_state["consolidated_frame_inds"]["cond_frame_outputs"].clear()
         inference_state["consolidated_frame_inds"]["non_cond_frame_outputs"].clear()
         inference_state["tracking_has_started"] = False
-        inference_state["frames_already_tracked"].clear()
+        inference_state["frames_tracked_per_obj"].clear()
 
     def _get_image_feature(self, inference_state, frame_idx, batch_size):
         """Compute the image features on a given frame."""
@@ -1143,6 +1153,7 @@ class SAM2VideoPredictor(SAM2Base):
         _map_keys(inference_state["mask_inputs_per_obj"])
         _map_keys(inference_state["output_dict_per_obj"])
         _map_keys(inference_state["temp_output_dict_per_obj"])
+        _map_keys(inference_state["frames_tracked_per_obj"])
 
         # Step 3: For packed tensor storage, we index the remaining ids and rebuild the per-object slices.
         def _slice_state(output_dict, storage_key):
